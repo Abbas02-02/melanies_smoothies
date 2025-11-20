@@ -17,14 +17,15 @@ if name_on_order:
 cnx = st.connection("Snowflake")
 session = cnx.session()
 
-# Read fruit options from Snowflake
-sf_df = (
-    session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
-    .select(col('FRUIT_NAME'), col('SEARCH_ON'))
-)
+# Cache fruit options for performance
+@st.cache_data(ttl=600)
+def load_fruit_options(session):
+    df = session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS") \
+                .select(col('FRUIT_NAME'), col('SEARCH_ON')) \
+                .to_pandas()
+    return df
 
-# Convert to pandas DataFrame
-pd_df = sf_df.to_pandas()
+pd_df = load_fruit_options(session)
 
 # Build options for multiselect from a simple list of fruit names
 fruit_options = pd_df['FRUIT_NAME'].dropna().tolist()
@@ -70,14 +71,12 @@ if ingredients_list:
 
         # Display JSON appropriately
         if isinstance(data, dict):
-            # Try to flatten dict; fall back to st.json
             try:
                 flat = pd.json_normalize(data)
                 st.dataframe(flat, use_container_width=True)
             except Exception:
                 st.json(data)
         elif isinstance(data, list):
-            # List of dicts -> DataFrame
             try:
                 st.dataframe(pd.json_normalize(data), use_container_width=True)
             except Exception:
@@ -91,11 +90,10 @@ if ingredients_list:
         if not name_on_order:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
-            # Use parameterized SQL to prevent injection
             try:
-                session.sql(
-                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)",
-                ).bind([ingredients_string, name_on_order]).collect()
+                # Safe insert using Snowpark
+                orders_table = session.table("SMOOTHIES.PUBLIC.ORDERS")
+                orders_table.insert([ingredients_string, name_on_order])
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
                 st.error(f"Order submission failed: {e}")
