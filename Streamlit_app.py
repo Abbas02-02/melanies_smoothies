@@ -1,4 +1,3 @@
-# Import python packages
 import streamlit as st
 from snowflake.snowpark.functions import col
 import requests
@@ -13,36 +12,28 @@ name_on_order = st.text_input('Name on Smoothie:')
 if name_on_order:
     st.write('The name on your smoothie will be', name_on_order)
 
-# Snowflake connection via Streamlit (requires st.secrets connections.Snowflake)
+# Snowflake connection
 cnx = st.connection("Snowflake")
 session = cnx.session()
 
-# Cache fruit options for performance
+# Cache fruit options (no session argument)
 @st.cache_data(ttl=600)
-def load_fruit_options(session):
+def load_fruit_options():
     df = session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS") \
                 .select(col('FRUIT_NAME'), col('SEARCH_ON')) \
                 .to_pandas()
     return df
 
-pd_df = load_fruit_options(session)
+pd_df = load_fruit_options()
 
-# Build options for multiselect from a simple list of fruit names
+# Multiselect options
 fruit_options = pd_df['FRUIT_NAME'].dropna().tolist()
+ingredients_list = st.multiselect('Choose up to 5 ingredients:', fruit_options, max_selections=5)
 
-ingredients_list = st.multiselect(
-    'Choose up to 5 ingredients:',
-    fruit_options,
-    max_selections=5
-)
-
-# Show nutrition info for selected fruits
 if ingredients_list:
-    # Create a clean ingredients string
     ingredients_string = ', '.join(ingredients_list)
 
     for fruit_chosen in ingredients_list:
-        # Lookup search key safely
         row = pd_df.loc[pd_df['FRUIT_NAME'] == fruit_chosen]
         if row.empty:
             st.warning(f"No search key found for {fruit_chosen}.")
@@ -51,7 +42,6 @@ if ingredients_list:
         search_on = row['SEARCH_ON'].iloc[0]
         st.write(f"The search value for **{fruit_chosen}** is **{search_on}**.")
 
-        # Call the external API with proper formatting & error handling
         url = f"https://my.smoothiefroot.com/api/fruit/{search_on}"
         try:
             resp = requests.get(url, timeout=10)
@@ -61,15 +51,12 @@ if ingredients_list:
             continue
 
         st.subheader(f"{fruit_chosen} Nutrition Information")
-
-        # Safely parse JSON and display
         try:
             data = resp.json()
         except ValueError:
             st.error("The API did not return valid JSON.")
             continue
 
-        # Display JSON appropriately
         if isinstance(data, dict):
             try:
                 flat = pd.json_normalize(data)
@@ -84,14 +71,13 @@ if ingredients_list:
         else:
             st.json(data)
 
-    # Submit button
+    # Submit order
     time_to_insert = st.button('Submit Order')
     if time_to_insert:
         if not name_on_order:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
             try:
-                # Safe insert using Snowpark
                 orders_table = session.table("SMOOTHIES.PUBLIC.ORDERS")
                 orders_table.insert([ingredients_string, name_on_order])
                 st.success('Your Smoothie is ordered! ✅')
