@@ -1,72 +1,98 @@
 # Import python packages
 import streamlit as st
-#from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.functions import col
 import requests
-import pandas
+import pandas as pd
 
-# Write directly to the app
-st.title(f":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
-st.write(
-  """Choose the fruits you want in your custom Smoothie!
-  """
-)
+# App header
+st.title(":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
+st.write("Choose the fruits you want in your custom Smoothie!")
 
+# Name input
 name_on_order = st.text_input('Name on Smoothie:')
-st.write('The name on your smoothie will be', name_on_order)
+if name_on_order:
+    st.write('The name on your smoothie will be', name_on_order)
 
-#session = get_active_session()
+# Snowflake connection via Streamlit
+# Requires proper st.secrets configuration for "connections.Snowflake"
 cnx = st.connection("Snowflake")
 session = cnx.session()
 
-my_dataframe = session.table("smoothies.public.fruit_options").select(col('FRUIT_NAME'),col('SEARCH_ON'))
-#st.dataframe(data=my_dataframe, use_container_width=True)
-#st.stop()
+# Read fruit options from Snowflake
+sf_df = (
+    session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
+    .select(col('FRUIT_NAME'), col('SEARCH_ON'))
+)
+pd_df = sf_df.to_pandas()
 
-#convert snowflake dataframe to panda datafram
-pd_df=my_dataframe.to_pandas()
-#st.dataframe(pd_df)
-#st.stop()
+# Build options for multiselect
+fruit_options = pd_df['FRUIT_NAME'].dropna().tolist()
 
 ingredients_list = st.multiselect(
-    'Choose up to 5 ingredients:',my_dataframe,max_selections=5
+    'Choose up to 5 ingredients:',
+    fruit_options,
+    max_selections=5
 )
 
+# Show nutrition info for selected fruits
 if ingredients_list:
-    #st.write(ingredients_list) 
-    #st.text(ingredients_list)
-
-    ingredients_string = ''
+    # Create a clean ingredients string
+    ingredients_string = ', '.join(ingredients_list)
 
     for fruit_chosen in ingredients_list:
-        ingredients_string += fruit_chosen + ' '
+        # Lookup search key safely
+        row = pd_df.loc[pd_df['FRUIT_NAME'] == fruit_chosen]
+        if row.empty:
+            st.warning(f"No search key found for {fruit_chosen}.")
+            continue
 
-        search_on=pd_df.loc[pd_df['FRUIT_NAME'] == fruit_chosen, 'SEARCH_ON'].iloc[0]
-        st.write('The search value for ', fruit_chosen,' is ', search_on, '.')
+        search_on = row['SEARCH_ON'].iloc[0]
+        st.write(f"The search value for **{fruit_chosen}** is **{search_on}**.")
 
-        st.subheader(fruit_chosen+' Nutrition Information')
-        smoothiefroot_response = requests.get("https://my.smoothiefroot.com/api/fruit/{search_on}")
-        sf_df = st.dataframe(data=smoothiefroot_response.json(), use_container_width=True )
-      
-    #st.write(ingredients_string)
+        # Call the external API with proper formatting & error handling
+        url = f"https://my.smoothiefroot.com/api/fruit/{search_on}"
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            st.error(f"Failed to fetch nutrition for {fruit_chosen}: {e}")
+            continue
 
-    my_insert_stmt = """ insert into smoothies.public.orders(ingredients, NAME_ON_ORDER)
-            values ('""" + ingredients_string + """', '""" +name_on_order+ """' )"""
+        # Display nutrition info (choose json or dataframe depending on shape)
+        st.subheader(f"{fruit_chosen} Nutrition Information")
+        try:
+            data = resp.json()
+        except ValueError:
+            st.error("The API did not return valid JSON.")
+            continue
 
-    #st.write(my_insert_stmt)     
-    #st.stop()
-    st.write(smoothiefroot_response)     
-    st.stop()
+        # If it's nested JSON, show raw JSON. If it's flat, tabularize it.
+        if isinstance(data, dict):
+            # Try to flatten a dict; if it fails, display JSON
+            try:
+                flat = pd.json_normalize(data)
+                st.dataframe(flat, use_container_width=True)
+            except Exception:
+                st.json(data)
+        elif isinstance(data, list):
+            # List of dicts -> DataFrame
+            st.dataframe(pd.json_normalize(data), use_container_width=True)
+        else:
+            st.json(data)
 
-    #st.write(my_insert_stmt)
+    # Prepare SQL insert
+    my_insert_stmt = f"""
+        INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
+        VALUES ('{ingredients_string}', '{name_on_order}')
+    """
+
+    # Submit button
     time_to_insert = st.button('Submit Order')
-
     if time_to_insert:
-      session.sql(my_insert_stmt).collect()
-    st.success('Your Smoothie is ordered!', icon="✅")
-
-
-
-#st.text(smoothiefroot_response)
-#st.text(smoothiefroot_response.json())
-
+        if not name_on_order:
+            st.error("Please enter a name for your smoothie before submitting.")
+        else:
+            try:
+                session.sql(my_insert_stmt).collect()
+                st.success('Your Smoothie is ordered! ✅')
+            except Exception as e:
