@@ -13,8 +13,7 @@ name_on_order = st.text_input('Name on Smoothie:')
 if name_on_order:
     st.write('The name on your smoothie will be', name_on_order)
 
-# Snowflake connection via Streamlit
-# Requires proper st.secrets configuration for "connections.Snowflake"
+# Snowflake connection via Streamlit (requires st.secrets connections.Snowflake)
 cnx = st.connection("Snowflake")
 session = cnx.session()
 
@@ -23,9 +22,11 @@ sf_df = (
     session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
     .select(col('FRUIT_NAME'), col('SEARCH_ON'))
 )
+
+# Convert to pandas DataFrame
 pd_df = sf_df.to_pandas()
 
-# Build options for multiselect
+# Build options for multiselect from a simple list of fruit names
 fruit_options = pd_df['FRUIT_NAME'].dropna().tolist()
 
 ingredients_list = st.multiselect(
@@ -58,17 +59,18 @@ if ingredients_list:
             st.error(f"Failed to fetch nutrition for {fruit_chosen}: {e}")
             continue
 
-        # Display nutrition info (choose json or dataframe depending on shape)
         st.subheader(f"{fruit_chosen} Nutrition Information")
+
+        # Safely parse JSON and display
         try:
             data = resp.json()
         except ValueError:
             st.error("The API did not return valid JSON.")
             continue
 
-        # If it's nested JSON, show raw JSON. If it's flat, tabularize it.
+        # Display JSON appropriately
         if isinstance(data, dict):
-            # Try to flatten a dict; if it fails, display JSON
+            # Try to flatten dict; fall back to st.json
             try:
                 flat = pd.json_normalize(data)
                 st.dataframe(flat, use_container_width=True)
@@ -76,15 +78,12 @@ if ingredients_list:
                 st.json(data)
         elif isinstance(data, list):
             # List of dicts -> DataFrame
-            st.dataframe(pd.json_normalize(data), use_container_width=True)
+            try:
+                st.dataframe(pd.json_normalize(data), use_container_width=True)
+            except Exception:
+                st.json(data)
         else:
             st.json(data)
-
-    # Prepare SQL insert
-    my_insert_stmt = f"""
-        INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
-        VALUES ('{ingredients_string}', '{name_on_order}')
-    """
 
     # Submit button
     time_to_insert = st.button('Submit Order')
@@ -92,7 +91,11 @@ if ingredients_list:
         if not name_on_order:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
+            # Use parameterized SQL to prevent injection
             try:
-                session.sql(my_insert_stmt).collect()
+                session.sql(
+                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)",
+                ).bind([ingredients_string, name_on_order]).collect()
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
+                st.error(f"Order submission failed: {e}")
