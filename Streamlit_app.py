@@ -16,7 +16,7 @@ if name_on_order:
 cnx = st.connection("Snowflake")
 session = cnx.session()
 
-# Cache fruit options (no session argument)
+# Cache fruit options (avoid passing session to cache)
 @st.cache_data(ttl=600)
 def load_fruit_options():
     df = session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS") \
@@ -78,8 +78,11 @@ if ingredients_list:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
             try:
-                orders_table = session.table("SMOOTHIES.PUBLIC.ORDERS")
-                orders_table.insert([ingredients_string, name_on_order])
+                insert_stmt = f"""
+                    INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
+                    VALUES ('{ingredients_string}', '{name_on_order}')
+                """
+                session.sql(insert_stmt).collect()
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
                 st.error(f"Order submission failed: {e}")
