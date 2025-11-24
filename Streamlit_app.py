@@ -1,90 +1,81 @@
+# Import python packages
 import streamlit as st
 from snowflake.snowpark.functions import col
 import requests
 
-# App header
-st.title(":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
-st.write("Choose the fruits you want in your custom Smoothie!")
+# Write directly to the app
+st.title(":cup_with_straw: Customize Your Smoothie :cup_with_straw:")
+st.write(
+    """Choose the fruits you want in your custom Smoothie!
+    """
+)
 
-# Name input
-name_on_order = st.text_input('Name on Smoothie:')
-if name_on_order:
-    st.write('The name on your smoothie will be', name_on_order)
+# Name input (kept original label)
+name_on_order = st.text_input('Name on Smothie: ')
+st.write('The name on your Smoothie will be: ', name_on_order)
 
-# Snowflake connection
-cnx = st.connection("Snowflake")
+# Snowflake connection (kept original lowercase)
+cnx = st.connection("snowflake")
 session = cnx.session()
 
-# Read fruit options from Snowflake
-try:
-    sf_df = (
-        session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
-        .select(col('FRUIT_NAME'), col('SEARCH_ON'))
-        .collect()
-    )
-except Exception as e:
-    st.error(f"Failed to load fruit options: {e}")
-    st.stop()
+# Read fruit options from Snowflake (kept original table path & selection)
+my_dataframe = session.table(
+    "smoothies.public.fruit_options"
+).select(col('FRUIT_NAME'), col('SEARCH_ON'))
 
-# Convert to Python list and dict for lookup
-fruit_options = [row['FRUIT_NAME'] for row in sf_df if row['FRUIT_NAME']]
-search_lookup = {row['FRUIT_NAME']: row['SEARCH_ON'] for row in sf_df}
+# Convert to pandas for lookups (kept original variable name)
+pd_df = my_dataframe.to_pandas()
 
-# Multiselect for ingredients
+# Multiselect (uses list of fruit names instead of the Snowpark DataFrame)
 ingredients_list = st.multiselect(
-    'Choose up to 5 ingredients:',
-    fruit_options,
+    "Choose up to 5 ingredients",
+    pd_df['FRUIT_NAME'].dropna().tolist(),
     max_selections=5
 )
 
-# Show nutrition info for selected fruits
 if ingredients_list:
-    ingredients_string = ''.join(ingredients_list)
+
+    ingredients_string = ''
 
     for fruit_chosen in ingredients_list:
-        search_on = search_lookup.get(fruit_chosen)
-        if not search_on:
+        ingredients_string += fruit_chosen + ' '
+
+        # Lookup SEARCH_ON in pandas (kept original style, with a safety check)
+        search_rows = pd_df.loc[pd_df['FRUIT_NAME'] == fruit_chosen, 'SEARCH_ON']
+        if search_rows.empty or not str(search_rows.iloc[0]).strip():
             st.warning(f"No search key found for {fruit_chosen}.")
             continue
 
-        st.write(f"The search value for **{fruit_chosen}** is **{search_on}**.")
+        search_on = str(search_rows.iloc[0]).strip()
+        st.write('The search value for ', fruit_chosen, ' is ', search_on, '.')
 
-        # Call external API
+        # ✅ Use Script 2's API URL, kept in Script 1's call pattern
         url = f"https://my.smoothiefroot.com/api/fruit/{search_on}"
         try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-        except requests.RequestException as e:
+            fruity_response = requests.get(url, timeout=10)
+            fruity_response.raise_for_status()
+            data = fruity_response.json()
+            # Kept Script 1's 'dataframe' display approach where possible
+            if isinstance(data, (dict, list)):
+                st.dataframe(data=data, use_container_width=True)
+            else:
+                st.write(data)
+        except Exception as e:
             st.error(f"Failed to fetch nutrition for {fruit_chosen}: {e}")
-            continue
 
-        st.subheader(f"{fruit_chosen} Nutrition Information")
+    # Show ingredients as in original
+    st.write(ingredients_string.strip())
 
-        # Parse JSON and display
-        try:
-            data = resp.json()
-        except ValueError:
-            st.error("The API did not return valid JSON.")
-            continue
+    # Insert using Script 1's template string-building style
+    my_insert_stmt = """ insert into smoothies.public.orders
+    (ingredients, name_on_order)
+    values ('""" + ingredients_string.strip() + """', '""" + name_on_order + """')"""
 
-        if isinstance(data, dict) or isinstance(data, list):
-            st.json(data)
-        else:
-            st.write(data)
-
-    # Submit button
     time_to_insert = st.button('Submit Order')
+
     if time_to_insert:
-        if not name_on_order:
-            st.error("Please enter a name for your smoothie before submitting.")
-        else:
-            try:
-                # ✅ Correct Snowpark insertion using session.sql().collect()
-                insert_query = f"""
-                INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
-                VALUES ('{ingredients_string}', '{name_on_order}')
-                """
-                session.sql(insert_query).collect()
-                st.success('Your Smoothie is ordered! ✅')
-            except Exception as e:
-                st.error(f"Order submission failed: {e}")
+        try:
+            session.sql(my_insert_stmt).collect()
+            st.success('Your Smoothie is ordered, ' + name_on_order + '!', icon="✅")
+        except Exception as e:
+            st.error(f"Order submission failed: {e}")
