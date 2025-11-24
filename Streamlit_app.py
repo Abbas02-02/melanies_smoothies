@@ -35,7 +35,7 @@ ingredients_list = st.multiselect(
 
 # Show nutrition info for selected fruits
 if ingredients_list:
-    ingredients_string = ', '.join(ingredients_list)
+    ingredients_string = ' '.join(ingredients_list)
 
     for fruit_chosen in ingredients_list:
         search_on = search_lookup.get(fruit_chosen)
