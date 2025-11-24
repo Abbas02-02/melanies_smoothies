@@ -83,7 +83,7 @@ if ingredients_list:
                 # ✅ Use session.execute() with params for safe insertion
                 session.execute(
                     "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)",
-                    params=[ingredients_string, name_on_order]
+                    params=[ingredients, name_on_order]
                 )
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
