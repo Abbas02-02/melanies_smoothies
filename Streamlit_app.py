@@ -82,7 +82,7 @@ if ingredients_list:
                 # ✅ Correct Snowpark insertion using session.sql().collect()
                 insert_query = f"""
                 INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
-                VALUES ('{ingredients}', '{name_on_order}')
+                VALUES ('{ingredients_string}', '{name_on_order}')
                 """
                 session.sql(insert_query).collect()
                 st.success('Your Smoothie is ordered! ✅')
