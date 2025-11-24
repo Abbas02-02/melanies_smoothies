@@ -1,89 +1,60 @@
 import streamlit as st
-from snowflake.snowpark.functions import col
 import requests
+from snowflake.snowpark.functions import col
 
+# Write directly to the app
 st.title("Customize Your Smoothie :cup_with_straw:")
-st.write("Choose the fruits you want in your custom Smoothie!")
+st.write(
+    """
+    Choose the fruits you want in your custom Smoothie!
+    """
+)
 
-# --- Name on order ---
-name_on_order = st.text_input("Name on Smoothie", placeholder="e.g., Happi")
-if name_on_order:
-    st.caption(f"The name on your smoothie will be: **{name_on_order}**")
+# User input for name on order
+name_on_order = st.text_input("Name on Smoothie")
+st.write("The name on your smoothie will be: ", name_on_order)
 
-# --- Connect to Snowflake ---
 try:
-    # If using secrets.toml, this is enough:
+    # Establish connection to Snowflake (assuming st.connection is correctly defined)
     cnx = st.connection("snowflake")
     session = cnx.session()
 
-    # --- Load fruit options as a dictionary ---
-    # Expect table: SMOOTHIES.PUBLIC.FRUIT_OPTIONS with columns FRUIT_NAME, SEARCH_ON
-    fruit_df = (
-        session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
-        .select(col("FRUIT_NAME"), col("SEARCH_ON"))
-        .collect()
-    )
-    # Build mapping: fruit name -> search key
-    fruit_map = {row["FRUIT_NAME"]: row["SEARCH_ON"] for row in fruit_df}
-    fruit_names = sorted(fruit_map.keys())
+    # Retrieve fruit options from Snowflake
+    my_dataframe = session.table("smoothies.public.fruit_options").select(col("FRUIT_NAME"))
 
-    # --- Ingredient selection ---
-    ingredients_list = st.multiselect(
-        "Choose up to 5 ingredients:",
-        options=fruit_names,
-        max_selections=5,
-        help="Pick your favorite fruits",
-    )
+    # Multi-select for choosing ingredients
+    ingredients_list = st.multiselect('Choose up to 5 ingredients:', my_dataframe, max_selections=5)
 
+    # Process ingredients selection
     if ingredients_list:
-        st.subheader("Fruit Info")
+        ingredients_string = ' '.join(ingredients_list)  # Join selected ingredients into a single string
         for fruit_chosen in ingredients_list:
-            search_on = fruit_map.get(fruit_chosen)
-            if not search_on:
-                st.warning(f"No search key found for {fruit_chosen}.")
-                continue
-
             try:
-                fruityvice_response = requests.get(
-                    f"https://my.smoothiefroot.com/api/fruit/{search_on}",
-                    timeout=8,
-                )
-                fruityvice_response.raise_for_status()
-                data = fruityvice_response.json()
-
-                # Show the JSON content nicely
-                st.json(data)
-
-            except requests.exceptions.HTTPError as e:
-                st.warning(f"API returned an error for {fruit_chosen}: {e}")
+                # Make API request to get details about each fruit
+                fruityvice_response = requests.get("https://my.smoothiefroot.com/api/fruit/" + fruit_chosen)
+                fruityvice_response.raise_for_status()  # Raise an error for bad responses (4xx or 5xx)
+                
+                if fruityvice_response.status_code == 200:
+                    fv_df = st.dataframe(data=fruityvice_response.json(), use_container_width=True)
+                else:
+                    st.warning(f"Failed to fetch details for {fruit_chosen}")
+            
             except requests.exceptions.RequestException as e:
-                st.error(f"Failed to fetch details for {fruit_chosen}: {e}")
+                st.error(f"Failed to fetch details for {fruit_chosen}: {str(e)}")
 
-        # --- Submit order ---
-        ingredients_string = " ".join(ingredients_list)
+        # SQL statement to insert order into database (assuming proper handling of SQL injection risk)
+        my_insert_stmt = """INSERT INTO smoothies.public.orders(ingredients, name_on_order)
+                            VALUES ('{}', '{}')""".format(ingredients_string, name_on_order)
 
-        # Disable button until we have a name and at least one ingredient
-        time_to_insert = st.button(
-            "Submit Order",
-            disabled=(not name_on_order or len(ingredients_list) == 0),
-        )
-
+        # Button to submit order
+        time_to_insert = st.button('Submit Order')
         if time_to_insert:
             try:
-                # Parameterized insert to avoid SQL injection
-                session.sql(
-                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS(INGREDIENTS, NAME_ON_ORDER) "
-                    "VALUES (?, ?)",
-                    params=[ingredients_string, name_on_order],
-                ).collect()
-
-                st.success(f"Your Smoothie is ordered, {name_on_order}! ✅")
+                # Execute SQL insert statement
+                session.sql(my_insert_stmt).collect()
+                st.success('Your Smoothie is ordered, ' + name_on_order + '!', icon="✅")
             except Exception as e:
-                st.error(f"Failed to submit order: {e}")
+                st.error(f"Failed to submit order: {str(e)}")
 
 except Exception as ex:
-    st.error(f"An error occurred: {ex}")
-    st.info(
-        "Tip: Ensure you configured the Snowflake connection in `.streamlit/secrets.toml` "
-        "or passed connection kwargs to `st.connection()`."
-    )
+    st.error(f"An error occurred: {str(ex)}")
