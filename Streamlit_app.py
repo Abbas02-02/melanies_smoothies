@@ -15,7 +15,7 @@ name_on_order = st.text_input('Name on Smothie: ')
 st.write('The name on your Smoothie will be: ', name_on_order)
 
 # Snowflake connection (kept original lowercase)
-cnx = st.connection("snowflake")
+cnx = st.connection("Snowflake")
 session = cnx.session()
 
 # Read fruit options from Snowflake (kept original table path & selection)
