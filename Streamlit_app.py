@@ -20,7 +20,7 @@ try:
     sf_df = (
         session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
         .select(col('FRUIT_NAME'), col('SEARCH_ON'))
-        .collect()  # Returns a list of Row objects
+        .collect()
     )
 except Exception as e:
     st.error(f"Failed to load fruit options: {e}")
@@ -67,7 +67,6 @@ if ingredients_list:
             st.error("The API did not return valid JSON.")
             continue
 
-        # Display JSON directly
         if isinstance(data, dict) or isinstance(data, list):
             st.json(data)
         else:
@@ -80,11 +79,12 @@ if ingredients_list:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
             try:
-                # ✅ Use session.execute() with params for safe insertion
-                session.execute(
-                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)",
-                    params=[ingredients, name_on_order]
-                )
+                # ✅ Correct Snowpark insertion using session.sql().collect()
+                insert_query = f"""
+                INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
+                VALUES ('{ingredients}', '{name_on_order}')
+                """
+                session.sql(insert_query).collect()
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
                 st.error(f"Order submission failed: {e}")
