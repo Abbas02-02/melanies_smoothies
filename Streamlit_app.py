@@ -16,13 +16,17 @@ cnx = st.connection("Snowflake")
 session = cnx.session()
 
 # Read fruit options from Snowflake
-sf_df = (
-    session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
-    .select(col('FRUIT_NAME'), col('SEARCH_ON'))
-    .collect()  # Returns a list of Row objects
-)
+try:
+    sf_df = (
+        session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
+        .select(col('FRUIT_NAME'), col('SEARCH_ON'))
+        .collect()  # Returns a list of Row objects
+    )
+except Exception as e:
+    st.error(f"Failed to load fruit options: {e}")
+    st.stop()
 
-# Convert to a simple Python list and dict for lookup
+# Convert to Python list and dict for lookup
 fruit_options = [row['FRUIT_NAME'] for row in sf_df if row['FRUIT_NAME']]
 search_lookup = {row['FRUIT_NAME']: row['SEARCH_ON'] for row in sf_df}
 
@@ -63,7 +67,7 @@ if ingredients_list:
             st.error("The API did not return valid JSON.")
             continue
 
-        # Display JSON directly (no pandas)
+        # Display JSON directly
         if isinstance(data, dict) or isinstance(data, list):
             st.json(data)
         else:
@@ -76,9 +80,11 @@ if ingredients_list:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
             try:
-                session.sql(
-                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)"
-                ).bind([ingredients_string, name_on_order]).collect()
+                # ✅ Use session.execute() with params for safe insertion
+                session.execute(
+                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)",
+                    params=[ingredients_string, name_on_order]
+                )
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
                 st.error(f"Order submission failed: {e}")
