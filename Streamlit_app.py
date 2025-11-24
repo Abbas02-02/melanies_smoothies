@@ -1,60 +1,84 @@
 import streamlit as st
-import requests
 from snowflake.snowpark.functions import col
+import requests
 
-# Write directly to the app
-st.title("Customize Your Smoothie :cup_with_straw:")
-st.write(
-    """
-    Choose the fruits you want in your custom Smoothie!
-    """
+# App header
+st.title(":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
+st.write("Choose the fruits you want in your custom Smoothie!")
+
+# Name input
+name_on_order = st.text_input('Name on Smoothie:')
+if name_on_order:
+    st.write('The name on your smoothie will be', name_on_order)
+
+# Snowflake connection
+cnx = st.connection("Snowflake")
+session = cnx.session()
+
+# Read fruit options from Snowflake
+sf_df = (
+    session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
+    .select(col('FRUIT_NAME'), col('SEARCH_ON'))
+    .collect()  # Returns a list of Row objects
 )
 
-# User input for name on order
-name_on_order = st.text_input("Name on Smoothie")
-st.write("The name on your smoothie will be: ", name_on_order)
+# Convert to a simple Python list and dict for lookup
+fruit_options = [row['FRUIT_NAME'] for row in sf_df if row['FRUIT_NAME']]
+search_lookup = {row['FRUIT_NAME']: row['SEARCH_ON'] for row in sf_df}
 
-try:
-    # Establish connection to Snowflake (assuming st.connection is correctly defined)
-    cnx = st.connection("snowflake")
-    session = cnx.session()
+# Multiselect for ingredients
+ingredients_list = st.multiselect(
+    'Choose up to 5 ingredients:',
+    fruit_options,
+    max_selections=5
+)
 
-    # Retrieve fruit options from Snowflake
-    my_dataframe = session.table("smoothies.public.fruit_options").select(col("FRUIT_NAME"))
+# Show nutrition info for selected fruits
+if ingredients_list:
+    ingredients_string = ', '.join(ingredients_list)
 
-    # Multi-select for choosing ingredients
-    ingredients_list = st.multiselect('Choose up to 5 ingredients:', my_dataframe, max_selections=5)
+    for fruit_chosen in ingredients_list:
+        search_on = search_lookup.get(fruit_chosen)
+        if not search_on:
+            st.warning(f"No search key found for {fruit_chosen}.")
+            continue
 
-    # Process ingredients selection
-    if ingredients_list:
-        ingredients_string = ' '.join(ingredients_list)  # Join selected ingredients into a single string
-        for fruit_chosen in ingredients_list:
+        st.write(f"The search value for **{fruit_chosen}** is **{search_on}**.")
+
+        # Call external API
+        url = f"https://my.smoothiefroot.com/api/fruit/{search_on}"
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            st.error(f"Failed to fetch nutrition for {fruit_chosen}: {e}")
+            continue
+
+        st.subheader(f"{fruit_chosen} Nutrition Information")
+
+        # Parse JSON and display
+        try:
+            data = resp.json()
+        except ValueError:
+            st.error("The API did not return valid JSON.")
+            continue
+
+        # Display JSON directly (no pandas)
+        if isinstance(data, dict) or isinstance(data, list):
+            st.json(data)
+        else:
+            st.write(data)
+
+    # Submit button
+    time_to_insert = st.button('Submit Order')
+    if time_to_insert:
+        if not name_on_order:
+            st.error("Please enter a name for your smoothie before submitting.")
+        else:
             try:
-                # Make API request to get details about each fruit
-                fruityvice_response = requests.get("https://my.smoothiefroot.com/api/fruit/" + fruit_chosen)
-                fruityvice_response.raise_for_status()  # Raise an error for bad responses (4xx or 5xx)
-                
-                if fruityvice_response.status_code == 200:
-                    fv_df = st.dataframe(data=fruityvice_response.json(), use_container_width=True)
-                else:
-                    st.warning(f"Failed to fetch details for {fruit_chosen}")
-            
-            except requests.exceptions.RequestException as e:
-                st.error(f"Failed to fetch details for {fruit_chosen}: {str(e)}")
-
-        # SQL statement to insert order into database (assuming proper handling of SQL injection risk)
-        my_insert_stmt = """INSERT INTO smoothies.public.orders(ingredients, name_on_order)
-                            VALUES ('{}', '{}')""".format(ingredients_string, name_on_order)
-
-        # Button to submit order
-        time_to_insert = st.button('Submit Order')
-        if time_to_insert:
-            try:
-                # Execute SQL insert statement
-                session.sql(my_insert_stmt).collect()
-                st.success('Your Smoothie is ordered, ' + name_on_order + '!', icon="✅")
+                session.sql(
+                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)"
+                ).bind([ingredients_string, name_on_order]).collect()
+                st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
-                st.error(f"Failed to submit order: {str(e)}")
-
-except Exception as ex:
-    st.error(f"An error occurred: {str(ex)}")
+                st.error(f"Order submission failed: {e}")
