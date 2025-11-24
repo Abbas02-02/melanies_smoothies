@@ -1,6 +1,6 @@
 import streamlit as st
-from snowflake.snowpark.functions import col
 import requests
+from snowflake.snowpark.functions import col
 
 # App header
 st.title(":cup_with_straw: Customize Your Smoothie! :cup_with_straw:")
@@ -11,20 +11,19 @@ name_on_order = st.text_input('Name on Smoothie:')
 if name_on_order:
     st.write('The name on your smoothie will be', name_on_order)
 
-# Snowflake connection
-cnx = st.connection("Snowflake")
-session = cnx.session()
+# Get Snowflake session
+session = st.connection("snowflake").session()
 
 # Read fruit options from Snowflake
-sf_df = (
+rows = (
     session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS")
     .select(col('FRUIT_NAME'), col('SEARCH_ON'))
-    .collect()  # Returns a list of Row objects
+    .collect()
 )
 
-# Convert to a simple Python list and dict for lookup
-fruit_options = [row['FRUIT_NAME'] for row in sf_df if row['FRUIT_NAME']]
-search_lookup = {row['FRUIT_NAME']: row['SEARCH_ON'] for row in sf_df}
+# Prepare options and lookup dictionary
+fruit_options = [row['FRUIT_NAME'] for row in rows if row['FRUIT_NAME']]
+search_lookup = {row['FRUIT_NAME']: row['SEARCH_ON'] for row in rows}
 
 # Multiselect for ingredients
 ingredients_list = st.multiselect(
@@ -35,6 +34,7 @@ ingredients_list = st.multiselect(
 
 # Show nutrition info for selected fruits
 if ingredients_list:
+    # Use space-separated string for DB insert
     ingredients_string = ' '.join(ingredients_list)
 
     for fruit_chosen in ingredients_list:
@@ -63,22 +63,20 @@ if ingredients_list:
             st.error("The API did not return valid JSON.")
             continue
 
-        # Display JSON directly (no pandas)
-        if isinstance(data, dict) or isinstance(data, list):
-            st.json(data)
-        else:
-            st.write(data)
+        # Display JSON directly
+        st.json(data)
 
     # Submit button
-    time_to_insert = st.button('Submit Order')
-    if time_to_insert:
+    if st.button('Submit Order'):
         if not name_on_order:
             st.error("Please enter a name for your smoothie before submitting.")
         else:
             try:
-                session.sql(
-                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (?, ?)"
-                ).bind([ingredients_string, name_on_order]).collect()
+                # Correct way to insert using session.execute()
+                session.execute(
+                    "INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER) VALUES (%s, %s)",
+                    (ingredients_string, name_on_order)
+                )
                 st.success('Your Smoothie is ordered! ✅')
             except Exception as e:
                 st.error(f"Order submission failed: {e}")
